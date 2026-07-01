@@ -2,7 +2,10 @@
 # 구독관리(book_control) 프로젝트 자동 GitHub 업로드 감시 스크립트
 # 30초마다 변경을 감지해 자동으로 커밋 & 푸시합니다.
 
-$ErrorActionPreference = "Stop"
+# git 은 진행 메시지를 stderr 로 출력하므로, 이를 오류로 취급하지 않도록 설정
+$ErrorActionPreference = "Continue"
+$PSNativeCommandUseErrorActionPreference = $false
+
 $repo = "C:\Users\sdw19\Desktop\260701_구독관리"
 $logFile = Join-Path $repo "auto-sync.log"
 $intervalSec = 30
@@ -18,16 +21,16 @@ Write-Log "=== auto-sync 시작 (감시 간격 ${intervalSec}초) ==="
 while ($true) {
     try {
         # 원격 변경 먼저 반영 (충돌 없이 rebase)
-        git -c user.name="sdw1621" -c user.email="sdw1621@gmail.com" pull --rebase --autostash origin main 2>&1 | Out-Null
+        git -c user.name="sdw1621" -c user.email="sdw1621@gmail.com" pull --rebase --autostash origin main *>&1 | Out-Null
 
         # 로컬 변경 확인
         $status = git status --porcelain
         if ($status) {
-            git add -A 2>&1 | Out-Null
+            git add -A *>&1 | Out-Null
             $ts = Get-Date -Format "yyyy-MM-dd HH:mm"
             $msg = "자동 저장: $ts (직접 수정 반영)"
-            git -c user.name="sdw1621" -c user.email="sdw1621@gmail.com" commit -m $msg 2>&1 | Out-Null
-            git push origin main 2>&1 | Out-Null
+            git -c user.name="sdw1621" -c user.email="sdw1621@gmail.com" commit -m $msg *>&1 | Out-Null
+            $push = git push origin main *>&1
             $files = ($status | Measure-Object).Count
             Write-Log "커밋 & 푸시 완료 ($files개 파일 변경)"
         }
