@@ -17,8 +17,6 @@
     --bg:#f4f6fb; --panel:#ffffff; --panel-2:#f3f5fa; --line:#e3e7ef;
     --text:#1a1f2b; --muted:#5c6679; --soft:#8a92a6;
     --chip:#eef1f7; --shadow:0 8px 30px rgba(60,80,140,.12);
-  }
-  body[data-theme="light"]{
     background:radial-gradient(1200px 700px at 80% -10%,#e9eefc 0,var(--bg) 55%);
   }
   *{box-sizing:border-box}
@@ -61,6 +59,9 @@
   .rate-meta{font-size:10.5px;color:var(--soft);margin-left:4px}
   .theme-btn{background:var(--chip);border:1px solid var(--line);color:var(--text);width:40px;height:40px;border-radius:11px;font-size:17px}
   .theme-btn:hover{background:var(--panel-2)}
+  .mini-input{background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:5px 8px;color:var(--text);font-size:12px;font-family:inherit;font-weight:500}
+  .mini-input:focus{outline:none;border-color:var(--accent)}
+  input.mini-input{width:96px}
 
   /* summary cards */
   .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
@@ -187,7 +188,17 @@
 
   <div class="grid">
     <div class="panel">
-      <h2>내 구독 목록 <span class="hint" id="sortHint">결제일 가까운 순</span></h2>
+      <h2>내 구독 목록
+        <span class="hint" style="display:flex;gap:6px;align-items:center">
+          <input id="subSearch" class="mini-input" placeholder="🔍 검색" autocomplete="off" />
+          <select id="subSort" class="mini-input">
+            <option value="date">결제일 순</option>
+            <option value="price-desc">가격 높은 순</option>
+            <option value="price-asc">가격 낮은 순</option>
+            <option value="name">이름 순</option>
+          </select>
+        </span>
+      </h2>
       <div class="sub-list" id="subList"></div>
     </div>
     <div class="panel">
@@ -296,6 +307,7 @@ const COLORS = ["#6c8cff","#9b6cff","#34d399","#fbbf24","#f87171","#22d3ee","#f4
 const LS_KEY = "subs_v1", LS_RATE = "subs_rate_v1";
 let state = { subs: [], calDate: new Date() };
 let pickedColor = COLORS[0];
+let listSort = "date", listSearch = "";
 
 /* ---------- storage ---------- */
 function load(){
@@ -332,13 +344,15 @@ function seed(){
 function uid(){ return Math.random().toString(36).slice(2,9); }
 
 /* ---------- calc ---------- */
-function toKRWmonthly(s){
+function isActive(s){ return s.active!==false; }
+function monthlyCostRaw(s){
   if(s.cycle==="trial") return 0; // 무료체험은 월 비용에 포함하지 않음
   let amt = s.amount * (s.currency==="USD"?getRate():1);
   if(s.cycle==="yearly") amt/=12;
   else if(s.cycle==="weekly") amt*=52/12;
   return amt;
 }
+function toKRWmonthly(s){ return isActive(s) ? monthlyCostRaw(s) : 0; } // 일시정지 구독은 비용 미포함
 function cycleLabel(c){ return c==="weekly"?"매주":c==="yearly"?"매년":c==="trial"?"무료체험":"매월"; }
 function isExpired(s){ return s.cycle==="trial" && daysUntil(s.date)<0; }
 function fmt(n){ return "₩"+Math.round(n).toLocaleString("ko-KR"); }
@@ -369,6 +383,7 @@ function renderBanner(){
   // 3일 이내 결제 예정 + 무료체험 종료 임박
   const items=[];
   state.subs.forEach(s=>{
+    if(!isActive(s)) return;
     const nd=nextDate(s); const dd=daysUntil(nd.toISOString());
     if(s.cycle==="trial"){
       if(dd>=0 && dd<=3) items.push({s,dd,trial:true});
@@ -391,46 +406,66 @@ function renderBanner(){
 function todayKey(){ return new Date().toISOString().slice(0,10); }
 
 function renderCards(){
+  const activeCount = state.subs.filter(isActive).length;
   const monthly = state.subs.reduce((a,s)=>a+toKRWmonthly(s),0);
   const yearly = monthly*12;
   // this month upcoming
   const now=new Date(); const mNow=now.getMonth(), yNow=now.getFullYear();
   let thisMonth=0, cnt=0;
-  state.subs.forEach(s=>{ const nd=nextDate(s); if(nd.getMonth()===mNow && nd.getFullYear()===yNow){ thisMonth+=toBill(s); cnt++; } });
+  state.subs.forEach(s=>{ if(!isActive(s)) return; const nd=nextDate(s); if(nd.getMonth()===mNow && nd.getFullYear()===yNow){ thisMonth+=toBill(s); cnt++; } });
   const el=document.getElementById("cards");
   el.innerHTML = `
     <div class="card accent"><div class="glow"></div>
       <div class="lbl">📅 월 환산 총액</div><div class="val">${fmt(monthly)}</div>
-      <div class="sub">활성 구독 ${state.subs.length}개</div></div>
+      <div class="sub">활성 구독 ${activeCount}개</div></div>
     <div class="card"><div class="lbl">📈 연 환산 총액</div><div class="val">${fmt(yearly)}</div>
       <div class="sub">월 ${fmt(monthly)} × 12</div></div>
     <div class="card"><div class="lbl">🔔 이번 달 결제 예정</div><div class="val">${fmt(thisMonth)}</div>
       <div class="sub">${cnt}건 남음</div></div>
-    <div class="card"><div class="lbl">💳 평균 구독 단가</div><div class="val">${fmt(state.subs.length?monthly/state.subs.length:0)}</div>
+    <div class="card"><div class="lbl">💳 평균 구독 단가</div><div class="val">${fmt(activeCount?monthly/activeCount:0)}</div>
       <div class="sub">구독당 월 평균</div></div>`;
 }
 /* actual bill amount in KRW for one charge (not divided) */
-function toBill(s){ let amt=s.amount*(s.currency==="USD"?getRate():1); return amt; }
+function toBill(s){ if(!isActive(s)) return 0; let amt=s.amount*(s.currency==="USD"?getRate():1); return amt; }
 
 function renderList(){
-  const list = [...state.subs].sort((a,b)=>daysUntil(nextDate(a).toISOString())-daysUntil(nextDate(b).toISOString()));
+  const q=listSearch.trim().toLowerCase();
+  let list=[...state.subs];
+  if(q){
+    list=list.filter(s=>
+      (s.name||"").toLowerCase().includes(q) ||
+      (s.category||"").toLowerCase().includes(q) ||
+      (s.memo||"").toLowerCase().includes(q));
+  }
+  const dep=s=> (isExpired(s) || !isActive(s)) ? 1 : 0;   // 만료·일시정지는 항상 아래로
+  const cmp = {
+    "date":(a,b)=>daysUntil(nextDate(a).toISOString())-daysUntil(nextDate(b).toISOString()),
+    "price-desc":(a,b)=>monthlyCostRaw(b)-monthlyCostRaw(a),
+    "price-asc":(a,b)=>monthlyCostRaw(a)-monthlyCostRaw(b),
+    "name":(a,b)=>(a.name||"").localeCompare(b.name||"","ko")
+  }[listSort] || (()=>0);
+  list.sort((a,b)=> dep(a)-dep(b) || cmp(a,b));
   const el=document.getElementById("subList");
-  if(!list.length){ el.innerHTML=`<div class="empty">아직 등록된 구독이 없어요.<br>「＋ 구독 추가」로 시작하세요.</div>`; return; }
+  if(!list.length){
+    el.innerHTML = q
+      ? `<div class="empty">"${esc(listSearch)}" 검색 결과가 없어요.</div>`
+      : `<div class="empty">아직 등록된 구독이 없어요.<br>「＋ 구독 추가」로 시작하세요.</div>`;
+    return;
+  }
   el.innerHTML = list.map(s=>{
     const nd=nextDate(s); const dd=daysUntil(nd.toISOString());
-    const trial=s.cycle==="trial"; const expired=isExpired(s);
+    const trial=s.cycle==="trial"; const expired=isExpired(s); const inactive=!isActive(s);
     let cls,ddText;
     if(expired){ cls="ok"; ddText="종료됨"; }
     else{ cls = dd<=3?"urgent":dd<=7?"soon":"ok"; ddText = dd===0?"오늘":dd>0?`D-${dd}`:`${-dd}일전`; }
-    const krw = toKRWmonthly(s);
     const orig = s.currency==="USD"?`$${s.amount}`:`₩${Number(s.amount).toLocaleString()}`;
-    const priceMain = trial ? "무료" : fmt(krw);
-    const priceSub = trial ? (expired?"체험 종료":"체험 중") : "월 환산";
+    const priceMain = trial ? "무료" : fmt(monthlyCostRaw(s));
+    const priceSub = trial ? (expired?"체험 종료":"체험 중") : (inactive?"일시정지":"월 환산");
     const whenLabel = trial ? (expired?"종료":"종료 예정") : "다음";
-    return `<div class="sub-item" style="${expired?'opacity:.55':''}">
+    return `<div class="sub-item" style="${(expired||inactive)?'opacity:.55':''}">
       <div class="sub-ico" style="background:${s.color}">${(s.name[0]||"?").toUpperCase()}</div>
       <div class="sub-main">
-        <div class="sub-name">${esc(s.name)} <span class="dday ${cls}">${ddText}</span></div>
+        <div class="sub-name">${esc(s.name)} <span class="dday ${cls}">${ddText}</span>${inactive?' <span class="tag" style="color:var(--warn);border-color:var(--warn)">일시정지</span>':''}</div>
         <div class="sub-meta">
           <span class="tag">${esc(s.category)}</span>
           <span>${cycleLabel(s.cycle)} ${trial?"":orig}</span>
@@ -439,6 +474,7 @@ function renderList(){
       </div>
       <div class="sub-price"><div class="p">${priceMain}</div><div class="pm">${priceSub}</div></div>
       <div class="sub-actions">
+        <button class="icon-btn" onclick="toggleActive('${s.id}')" title="${inactive?'다시 활성화':'일시정지'}">${inactive?'▶️':'⏸️'}</button>
         <button class="icon-btn" onclick="openEdit('${s.id}')" title="편집">✏️</button>
       </div>
     </div>`;
@@ -454,6 +490,7 @@ function renderCalendar(){
   // map day->subs
   const byDay={}; let monthTotal=0;
   state.subs.forEach(s=>{
+    if(!isActive(s)) return;
     occurrencesInMonth(s,y,m).forEach(day=>{
       (byDay[day]=byDay[day]||[]).push(s);
       if(s.cycle!=="trial") monthTotal+=toBill(s);
@@ -507,7 +544,7 @@ function monthBillTotal(y,m){
   let t=0;
   const lastDay=new Date(y,m+1,0).getDate();
   state.subs.forEach(s=>{
-    if(s.cycle==="trial") return;
+    if(s.cycle==="trial" || !isActive(s)) return;
     const anchor=new Date(s.date);
     if(s.cycle==="monthly"){
       t+=toBill(s);                                  // 매월 1회
@@ -594,7 +631,7 @@ function renderLine(){
 }
 
 function renderBar(){
-  const arr=[...state.subs].map(s=>({name:s.name,color:s.color,v:toKRWmonthly(s)})).sort((a,b)=>b.v-a.v);
+  const arr=[...state.subs].map(s=>({name:s.name,color:s.color,v:toKRWmonthly(s)})).filter(a=>a.v>0).sort((a,b)=>b.v-a.v);
   const max=Math.max(...arr.map(a=>a.v),1);
   const el=document.getElementById("barChart");
   if(!arr.length){ el.innerHTML=`<div class="empty">데이터 없음</div>`; return; }
@@ -608,7 +645,7 @@ function renderBar(){
 function renderDonut(){
   const map={};
   state.subs.forEach(s=>{ map[s.category]=(map[s.category]||0)+toKRWmonthly(s); });
-  const entries=Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  const entries=Object.entries(map).filter(e=>e[1]>0).sort((a,b)=>b[1]-a[1]);
   const total=entries.reduce((a,e)=>a+e[1],0);
   const size=150, r=60, cx=size/2, cy=size/2, sw=24;
   let acc=0; const segs=[];
@@ -629,8 +666,8 @@ function renderDonut(){
     e_color(cat,col,v);
   });
   document.getElementById("donut").innerHTML=`<svg width="${size}" height="${size}">${segs.join("")}
-    <text x="${cx}" y="${cy-4}" text-anchor="middle" fill="#9aa1b1" font-size="11">월 합계</text>
-    <text x="${cx}" y="${cy+13}" text-anchor="middle" fill="#e7e9ee" font-size="14" font-weight="800">${fmt(total)}</text>
+    <text x="${cx}" y="${cy-4}" text-anchor="middle" fill="var(--muted)" font-size="11">월 합계</text>
+    <text x="${cx}" y="${cy+13}" text-anchor="middle" fill="var(--text)" font-size="14" font-weight="800">${fmt(total)}</text>
   </svg>`;
   document.getElementById("donutLegend").innerHTML = legendHTML;
   legendHTML="";
@@ -707,6 +744,11 @@ function deleteSub(){
   const id=document.getElementById("editId").value;
   if(id && confirm("이 구독을 삭제할까요?")){ state.subs=state.subs.filter(x=>x.id!==id); save(); closeModal(); render(); }
 }
+function toggleActive(id){
+  const s=state.subs.find(x=>x.id===id); if(!s) return;
+  s.active = !isActive(s);   // 일시정지 ↔ 활성 토글 (기록은 유지)
+  save(); render();
+}
 
 /* ---------- import/export ---------- */
 function exportData(){
@@ -718,7 +760,33 @@ function importData(){ document.getElementById("fileInput").click(); }
 document.getElementById("fileInput").addEventListener("change",e=>{
   const f=e.target.files[0]; if(!f) return;
   const r=new FileReader();
-  r.onload=()=>{ try{ const data=JSON.parse(r.result); if(Array.isArray(data)){ state.subs=data.map(s=>({id:s.id||uid(),...s})); save(); render(); alert("가져오기 완료!"); } else alert("올바른 백업 파일이 아닙니다."); }catch(err){ alert("파일을 읽을 수 없습니다."); } };
+  r.onload=()=>{
+    try{
+      const data=JSON.parse(r.result);
+      if(!Array.isArray(data)){ alert("올바른 백업 파일이 아닙니다."); return; }
+      const cycles=["weekly","monthly","yearly","trial"];
+      const valid=[]; let skipped=0;
+      for(const s of data){
+        if(!s || typeof s!=="object" || typeof s.name!=="string" || !s.name.trim()){ skipped++; continue; }
+        const amount=Number(s.amount);
+        valid.push({
+          id: (typeof s.id==="string" && s.id) ? s.id : uid(),
+          name: s.name.trim(),
+          amount: amount>=0 ? amount : 0,
+          currency: s.currency==="USD" ? "USD" : "KRW",
+          cycle: cycles.includes(s.cycle) ? s.cycle : "monthly",
+          category: (typeof s.category==="string" && s.category) ? s.category : "기타",
+          date: /^\d{4}-\d{2}-\d{2}$/.test(s.date) ? s.date : new Date().toISOString().slice(0,10),
+          color: (typeof s.color==="string" && /^#[0-9a-fA-F]{3,8}$/.test(s.color)) ? s.color : COLORS[0],
+          memo: typeof s.memo==="string" ? s.memo : "",
+          active: s.active!==false
+        });
+      }
+      if(!valid.length){ alert("가져올 수 있는 항목이 없습니다.\n올바른 백업 파일인지 확인해 주세요."); return; }
+      state.subs=valid; save(); render();
+      alert(`가져오기 완료! ${valid.length}개 항목` + (skipped?`\n(형식 오류 ${skipped}개는 건너뛰었어요)`:""));
+    }catch(err){ alert("파일을 읽을 수 없습니다."); }
+  };
   r.readAsText(f); e.target.value="";
 });
 
@@ -730,6 +798,13 @@ document.getElementById("btnDelete").onclick=deleteSub;
 document.getElementById("btnExport").onclick=exportData;
 document.getElementById("btnImport").onclick=importData;
 document.getElementById("overlay").addEventListener("click",e=>{ if(e.target.id==="overlay") closeModal(); });
+document.getElementById("subSearch").addEventListener("input",e=>{ listSearch=e.target.value; renderList(); });
+document.getElementById("subSort").addEventListener("change",e=>{ listSort=e.target.value; renderList(); });
+document.addEventListener("keydown",e=>{
+  if(!document.getElementById("overlay").classList.contains("on")) return;
+  if(e.key==="Escape"){ closeModal(); }
+  else if(e.key==="Enter" && e.target.tagName!=="TEXTAREA"){ e.preventDefault(); saveSub(); }
+});
 document.getElementById("rate").addEventListener("input",()=>{ localStorage.setItem(LS_RATE,getRate()); render(); });
 document.getElementById("calPrev").onclick=()=>{ state.calDate.setMonth(state.calDate.getMonth()-1); renderCalendar(); };
 document.getElementById("calNext").onclick=()=>{ state.calDate.setMonth(state.calDate.getMonth()+1); renderCalendar(); };
